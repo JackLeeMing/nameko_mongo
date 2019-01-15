@@ -1,13 +1,13 @@
 from setuptools import setup
 
 setup(
-    name='nameko_mongo',
-    version='1.0.0',
+    name='nameko_mongo_util',
+    version='1.0.2',
     url='https://github.com/JackLeeMing/nameko_mongo.git',
     license='MIT',
     author='Jaque',
     author_email='1285879942@qq.com',
-    packages=["nameko_mongo"],
+    packages=["nameko_mongo_util"],
     package_data={'':['*.*']},
     install_requires=[
         "nameko",
