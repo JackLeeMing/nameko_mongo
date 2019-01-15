@@ -1,0 +1,329 @@
+# -*- coding:utf-8 -*-
+from nameko.extensions import DependencyProvider
+from nameko.exceptions import safe_for_serialization
+from weakref import WeakKeyDictionary
+from types import ModuleType
+import datetime
+from pymongo import MongoClient
+from gridfs import GridFS
+from bson import ObjectId
+
+# mongo util
+try:
+    DB_HOST = __conf__.DB_HOST
+except Exception as e:
+    DB_HOST = 'localhost'
+
+try:
+    DB_NAME = __conf__.DB_NAME
+except Exception as e:
+    DB_NAME = 'test'
+
+try:
+    import settings
+except Exception as e:
+    pass
+
+def init_page(page):
+    start, end = 1, page.get('page_num')
+
+    page_index = int(page.get('page_index', '1'))
+    page_num = int(page.get('page_num'))
+
+    if page_index >5:
+        start = page_index - 5
+
+    if end >= 10:
+        end = start +9
+
+    if end > page_num:
+        end = page_num
+        start = page_num - 9
+
+    page['start'] = start
+    page['end'] = end
+
+    return page
+
+def mongo_conv(d):
+    if isinstance(d, (ObjectId, datetime.datetime, datetime.date)):
+        return str(d)
+    elif isinstance(d,(unicode,)):
+        return str(d.encode('utf-8'))
+    elif isinstance(d, list):
+        return map(mongo_conv, d)
+    elif isinstance(d, tuple):
+        return tuple(map(mongo_conv, d))
+    elif isinstance(d, dict):
+        return dict([(mongo_conv(k), mongo_conv(v)) for k, v in d.items()])
+    else:
+        return d
+
+class MongoIns(object):
+    conn = {}
+    host=DB_HOST
+    dbname=DB_NAME
+
+    def __init__(self, host=DB_HOST, dbname=DB_NAME):
+        self.dbname = dbname
+        self.host = host
+
+    def __new__(cls, *args, **kw):
+        if not hasattr(cls, '_instance_'):
+            orig = super(MongoIns, cls)
+            cls._instance_ = orig.__new__(cls, *args, **kw)
+
+        return cls._instance_
+
+    def get_conn(self, host = None, **kwargs):
+        host = host or self.host or DB_HOST
+        if not self.conn.get(host):
+            self.conn[host] = MongoClient(host = host)
+
+        return self.conn[host]
+
+    def get_gfs(self, host = None, dbname = None):
+        return GridFS(self.get_conn(host = host)[dbname or self.dbname or DB_NAME])
+
+    def m_insert(self, table, **kwargs):
+        """
+            简单保存数据
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+
+        return str(self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].insert(kwargs))
+
+
+    def m_find_one(self, table, fields=None, **kwargs):
+        """
+            查询单条记录
+            fields 指定需要输出的字段 like {'name':1}
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+
+        return mongo_conv(self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].find_one(kwargs, fields)) or {}
+
+    def m_list(self, table, fields=None, sorts = None, **kwargs):
+        """
+            列表查询
+            fields 指定需要输出的字段 like {'name':1}
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        #if not sorts:
+        #    sorts = [('_id', 1)]
+
+        page_index = int(kwargs.pop('page_index', 1))
+        page_size = int(kwargs.pop('page_size', 10))
+        findall = kwargs.pop('findall', None)
+
+        tb = self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table]
+        count = tb.find(kwargs).count()
+        if count and findall in [1, '1', True]:
+            page_index = 1
+            page_size = count
+
+        page_num = (count + page_size - 1)/ page_size
+        page = dict(page_index = page_index, page_size = page_size, page_num = page_num,allcount=count)
+
+        if sorts:
+            ret = mongo_conv(list(tb.find(kwargs, fields).sort(sorts).skip((page_index - 1) * page_size).limit(page_size)))
+        else:
+            ret = mongo_conv(list(tb.find(kwargs, fields).skip((page_index - 1) * page_size).limit(page_size)))
+
+        init_page(page)
+        return ret, page
+
+    def m_cursor(self, table, fields=None, sorts = None, **kwargs):
+        """
+            结果指针查询, 不分页
+            fields 指定需要输出的字段 like {'name':1}
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+
+        tb = self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table]
+
+        if sorts:
+            ret = tb.find(kwargs, fields).sort(sorts)
+        else:
+            ret = tb.find(kwargs, fields)
+
+
+        return ret
+
+    def m_del(self, table, **kwargs):
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].remove(kwargs)
+        return True
+
+    def m_update(self, table, query, upsert = False, **kwargs):
+        """
+            简单更新逻辑
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].update(query, {'$set': kwargs}, upsert = upsert, multi = True)
+        return True
+
+    def m_update_original(self, table, query, doc, upsert = False, **kwargs):
+        """
+            复杂自定义更新逻辑
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].update(query, doc, upsert = upsert, multi = True)
+        return True
+
+    def m_unset(self, table, query, fields, **kwargs):
+        """
+            fields: ['col1', 'col2']
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        unset = {}
+        for item in fields:
+            unset[item] = 1
+
+        self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].update(query, {'$unset': unset}, multi = True)
+
+    def m_addToSet(self, table, query, upsert = False, **kwargs):
+        """
+            追加列表
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].update(query, {'$addToSet': kwargs}, upsert = upsert)
+
+    def m_pull(self, table, query, **kwargs):
+        """
+            追加列表
+            fields: {字段: 值}
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].update(query, {'$pull': kwargs})
+
+    def m_count(self, table, **kwargs):
+        """
+            求数量
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        return self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].find(kwargs).count()
+
+    def m_group(self, table, key, cond, initial, func,  **kwargs):
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+
+        return self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].group(key, cond, initial, func, **kwargs)
+
+    def m_distinct(self, table, key, query = {}, **kwargs):
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        return self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].find(query).distinct(key)
+
+    def m_aggregate(self, table, pipeline, **kwargs):
+        """
+            aggregate
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        return self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].aggregate(pipeline)
+
+
+    def m_map_reduce(self, table, m, r, output, **kwargs):
+        """
+            map_reduce
+        """
+        dbname = None
+        if 'dbname' in kwargs:
+            dbname=kwargs.pop('dbname')
+
+        host = kwargs.pop('host', None)
+        return self.get_conn(host = host, **kwargs)[dbname or self.dbname or DB_NAME][table].map_reduce(m, r, output, **kwargs)
+
+
+# nameko run service --broker amqp://guest:guest@192.168.111.31
+# nameko shell --broker amqp://guest:guest@192.168.111.31
+class NamekoMongoIns(DependencyProvider):
+    def __init__(self,project, host=None, dbname=None):
+        self.host = host
+        self.dbname = dbname
+        self.project = project
+
+    def setup(self):
+        debug = self.container.config.get('TEST', True)
+        db_config = self.container.config.get('MONGO_CONFIG')
+        if db_config:
+            if debug:
+                DB_NAME = db_config['Test'][self.project]['DB_NAME']
+                DB_HOST = db_config['Test'][self.project]['DB_HOST']
+            else:
+                DB_NAME = db_config['Release'][self.project]['DB_NAME']
+                DB_HOST = db_config['Release'][self.project]['DB_HOST']
+            self.dbname = DB_NAME
+            self.host = DB_HOST
+
+        self.client = MongoIns(host=self.host, dbname=self.dbname)
+
+
+    def start(self):
+        pass
+
+    def stop(self):
+        self.client = None
+        pass
+
+    def kill(self):
+        self.client = None
+        pass
+
+    def get_dependency(self, worker_ctx):
+        return self.client
+
