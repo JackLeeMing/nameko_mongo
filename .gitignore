@@ -1,0 +1,5 @@
+build/
+dist/
+nameko_mongo.egg-info/
+*.egg-info
+*.DS_Store

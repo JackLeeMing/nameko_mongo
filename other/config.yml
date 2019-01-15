@@ -1,0 +1,31 @@
+AMQP_URI: amqp://guest:guest@192.168.111.31
+
+TEST: True
+
+MONGO_CONFIG:
+  Test:
+    sensorcmd:
+      DB_NAME: sensorcmd
+      DB_HOST: 192.168.111.149:27019
+      CACHE_HOST: 192.168.111.5:6371
+    citybms:
+      DB_NAME: citybms
+      DB_HOST: 192.168.111.5:27011
+      CACHE_HOST: 192.168.111.149
+    sxbms:
+      DB_NAME: sxbms
+      DB_HOST: 192.168.111.149:27019
+      CACHE_HOST: 192.168.111.147
+  Release:
+    sensorcmd:
+      DB_NAME: sensorcmd
+      DB_HOST: 192.168.111.149:27019
+      CACHE_HOST: 192.168.111.5:6371
+    citybms:
+      DB_NAME: citybms
+      DB_HOST: 192.168.111.5:27011
+      CACHE_HOST: 192.168.111.149
+    sxbms:
+      DB_NAME: sxbms
+      DB_HOST: 192.168.111.149:27019
+      CACHE_HOST: 192.168.111.147
