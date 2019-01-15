@@ -3,10 +3,10 @@ from setuptools import setup
 setup(
     name='nameko_mongo',
     version='1.0.0',
-    url='git@git.thunics.org:pytools/nameko-mongo_util.git',
+    url='https://github.com/JackLeeMing/nameko_mongo.git',
     license='Apache License, Version 2.0',
     author='lijk',
-    author_email='ljk19901@gmail.com',
+    author_email='1285879942@qq.com',
     packages=["nameko_mongo"],
     package_data={'':['*.*']},
     install_requires=[
